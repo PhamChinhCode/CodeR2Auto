@@ -24,7 +24,7 @@ PCF8574 pcf8574(0x20, &Wire1);
 #define GET_BYTE 0x82
 #define SET_BYTE 0x83
 // Physical motor
-#define OMNI_MOTOR 0x40
+#define MECANUM_MOTOR 0x40
 #define DC_NANG_HA 0x41
 #define DC_TIENLUI 0x42
 #define DC_XOAY 0x43
@@ -75,25 +75,15 @@ PCF8574 pcf8574(0x20, &Wire1);
 // ──────────────────────────────────────────────
 // nút chọn chế độ
 // ──────────────────────────────────────────────
-#define START_AUTO 7      // Nút START
-#define MODE_SAN 6        // Nút chọn sân (xanh/đỏ)
-#define MODE_GAPVK_GAPH 5 // Nút chọn gắp (vũ khí/hộp)
-
-// ──────────────────────────────────────────────
-// Chân dèn các nút
-// ──────────────────────────────────────────────
-#define DEN_START 4           // xanh lá cây
-#define DEN_MODE_SAN 2        // xanh dương
-#define DEN_MODE_GAPVK_GAPH 1 // trắng
+#define START_BUTTON 4 // xanh lá cây
+#define SAN_BUTTON 2   // xanh dương
+#define TASK_BUTTON 1  // trắng
 
 // ──────────────────────────────────────────────
 // chân cảm biến quang
 // ──────────────────────────────────────────────
 #define CB_QUANG_PIN_1 39 // Cảm biến quang kích HIGH
 #define CB_QUANG_PIN_2 40 // Cảm biến quang kích HIGH
-#define CB_QUANG_PIN_3 41 // Cảm biến quang kích HIGH
-#define CB_QUANG_PIN_4 42 // Cảm biến quang kích HIGH
-
 // ──────────────────────────────────────────────
 //  chân CTHT CỤM KẸP ĐẦU VŨ KHÍ
 // ──────────────────────────────────────────────
@@ -120,12 +110,12 @@ PCF8574 pcf8574(0x20, &Wire1);
 #define SONAR_DOWN 0x73
 #define SONAR_LEFT 0x74
 
-#define TRIG_CB1_TIEN 13
-#define ECHO_CB1_TIEN 12
-#define TRIG_CB2_TIEN_DUOI 10
-#define ECHO_CB2_TIEN_DUOI 46
-#define TRIG_CB3_SAU 17 // DUNG  CHÂN UART 1
-#define ECHO_CB3_SAU 18 // DUNG  CHÂN UART 1
+#define SONAR_UP_TRIG_PIN 13
+#define SONAR_UP_ECHO_PIN 12
+#define SONAR_DOWN_TRIG_PIN 10
+#define SONAR_DOWN_ECHO_PIN 46
+#define SONAR_LEFT_TRIG_PIN 17 // DUNG  CHÂN UART 1
+#define SONAR_LEFT_ECHO_PIN 18 // DUNG  CHÂN UART 1
 
 // ──────────────────────────────────────────────
 //  chân CẢM BIẾN laser
@@ -133,11 +123,11 @@ PCF8574 pcf8574(0x20, &Wire1);
 #define LASER_LEFT 0x30
 #define LASER_RIGHT 0x31
 
-#define XSHUT_LEFT_PIN 19
-#define XSHUT_RIGHT_PIN 20
+#define XSHUT_LEFT_PIN 41
+#define XSHUT_RIGHT_PIN 42
 
-#define WIRE_SDA 16
-#define WIRE_SCL 17
+#define WIRE_SDA 6
+#define WIRE_SCL 7
 
 // xilanh
 
@@ -177,6 +167,9 @@ ControlCMD getControlCMD(uint8_t motor);
 void horizonAlign();
 void verticalAlign();
 
+void autoSanDo();
+
+// flat for run code
 bool auto_start = false;
 bool auto_done = false;
 bool robotReady = false;
@@ -211,137 +204,14 @@ bool lastCTHTKeoTren = 1;
 
 void loop()
 {
+    readUartFromPC(); // Nhận dữ liệu Tag từ Camera (Serial2)
+    // kiemtratrangthainut();
 
-    sendControlCMD(ControlCMD{OMNI_MOTOR, CROSS_UP_RIGHT, 100, 20000});
-    delay(50);
-    while (getControlCMD(OMNI_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    if (auto_done)
     {
-        delay(50);
-    }
-    sendControlCMD(ControlCMD{OMNI_MOTOR, UP, 100, 2000});
-    delay(50);
-    while (getControlCMD(OMNI_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
-    {
-        delay(50);
-    }
-    // lên bậc 1
-    // horizonAlign();
-    {
-        // Test DC Motor
-        //-------------------------------------------------------------------------------------------------------
-        // if (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == 0 && lastCTHTKeoDuoi == 1) // Nếu cảm biến CTHT dưới động cơ kéo được kích hoạt
-        // {
-        //     ControlCMD cmd;
-        //     cmd.physicMotor = DC_NANG_HA;
-        //     cmd.direct = MOTOR_BACKWARD;
-        //     cmd.speed = 80;
-        //     cmd.distance = 0;
-        //     Serial.println("CTHT dưới động cơ kéo được kích hoạt - Kéo xuống");
-        //     sendControlCMD(cmd);
-        // }
-        // if (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == 1 && lastCTHTKeoDuoi == 0) // Nếu cảm biến CTHT trên động cơ kéo được kích hoạt
-        // {
-        //     ControlCMD cmd;
-        //     cmd.physicMotor = DC_NANG_HA;
-        //     cmd.direct = MOTOR_STOP;
-        //     cmd.speed = 0;
-        //     cmd.distance = 0;
-        //     Serial.println("CTHT dưới động cơ kéo được kích hoạt - Dừng kéo");
-        //     sendControlCMD(cmd);
-        // }
-        // lastCTHTKeoDuoi = digitalRead(PIN_CTHT_DUOI_DONGCO_KEO);
-
-        // if (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == 0 && lastCTHTKeoTren == 1) // Nếu cảm biến CTHT trên động cơ kéo được kích hoạt
-        // {
-        //     ControlCMD cmd;
-        //     cmd.physicMotor = DC_NANG_HA;
-        //     cmd.direct = MOTOR_FORWARD;
-        //     cmd.speed = 80;
-        //     cmd.distance = 0;
-        //     Serial.println("CTHT trên động cơ kéo được kích hoạt - Kéo lên");
-        //     sendControlCMD(cmd);
-        // }
-        // if (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == 1 && lastCTHTKeoTren == 0) // Nếu cảm biến CTHT trên động cơ kéo được kích hoạt
-        // {
-        //     ControlCMD cmd;
-        //     cmd.physicMotor = DC_NANG_HA;
-        //     cmd.direct = MOTOR_STOP;
-        //     cmd.speed = 0;
-        //     cmd.distance = 0;
-        //     Serial.println("CTHT trên động cơ kéo được kích hoạt - Dừng kéo");
-        //     sendControlCMD(cmd);
-        // }
-        // lastCTHTKeoTren = digitalRead(PIN_CTHT_TREN_DONGCO_KEO);
-
-        //-----------------------------------------------------------------------------------------------------------
-
-        // Test động cơ Omni
-        // ControlCMD cmd;
-        // cmd.physicMotor = OMNI_MOTOR;
-        // cmd.direct = UP;
-        // cmd.speed = 100;
-        // cmd.distance = 5000;
-        // Serial.println("Gửi lệnh điều khiển...");
-        // sendControlCMD(cmd);
-        // delay(100);
-        // Serial.println("Yêu cầu trạng thái hiện tại của động cơ...");
-        // ControlCMD receivedCmd = getControlCMD(OMNI_MOTOR);
-        // Serial.printf("Lệnh nhận được: Motor: 0x%02X, Direct: 0x%02X, Speed: %d, Distance: %d\n",
-        //               receivedCmd.physicMotor, receivedCmd.direct, receivedCmd.speed, receivedCmd.distance);
-        // while (receivedCmd.distance > 0)
-        // {
-        //     delay(100);
-        //     receivedCmd = getControlCMD(OMNI_MOTOR);
-        //     Serial.printf("Lệnh nhận được: Motor: 0x%02X, Direct: 0x%02X, Speed: %d, Distance: %d\n",
-        //                   receivedCmd.physicMotor, receivedCmd.direct, receivedCmd.speed, receivedCmd.distance);
-        // }
-        // cmd.physicMotor = OMNI_MOTOR;
-        // cmd.direct = DOWN;
-        // cmd.speed = 100;
-        // cmd.distance = 5000;
-        // Serial.println("Gửi lệnh điều khiển...");
-        // sendControlCMD(cmd);
-        // delay(100);
-        // while (receivedCmd.distance > 0)
-        // {
-        //     delay(100);
-        //     receivedCmd = getControlCMD(OMNI_MOTOR);
-        //     Serial.printf("Lệnh nhận được: Motor: 0x%02X, Direct: 0x%02X, Speed: %d, Distance: %d\n",
-        //                   receivedCmd.physicMotor, receivedCmd.direct, receivedCmd.speed, receivedCmd.distance);
-        // }
-        // delay(3000);
-        // MotorStatus status1 = {0, 0, 0};
-        // while (status1.status != STOP_MOTOR)
-        // {
-        //     status1 = getMotorStatus();
-        //     Serial.printf("Motor Status: %d, Speed: %d, Pulse: %d\n", status1.status, status1.speed, status1.pulse);
-
-        //     delay(100); // Đợi một chút trước khi kiểm tra lại
-        // }
-        // Serial.println("Đã hoàn thành lệnh nâng");
-        // while (
-        //--------------------------------
-        // readUartFromPC(); // Nhận dữ liệu Tag từ Camera (Serial2)
-        // kiemtratrangthainut();
-
-        // if (auto_done)
-        // {
-        //     auto_done = false;
-        //     robotReady = false;
-        //     Serial.println("XONG! Nhan START de chay lai.");
-        // }
-        //--------------------------------
-        // if (millis() - ControlTime > 505)
-        // {
-        //     Motor = getMotorStatus();
-        //     if (Motor.status != STOP)
-        //     {
-        //         sendMotorCommand(STOP, 0, 0);
-        //     }
-        //     ControlTime = millis();
-        // }
-
-        // delay(1);
+        auto_done = false;
+        robotReady = false;
+        Serial.println("XONG! Nhan START de chay lai.");
     }
 }
 void sendControlCMD(ControlCMD cmd, uint8_t cmdType)
@@ -394,10 +264,6 @@ ControlCMD getControlCMD(uint8_t motor)
 }
 void int_GPIO()
 {
-    // Chân dèn các nút
-    pinMode(DEN_START, OUTPUT);
-    pinMode(DEN_MODE_SAN, OUTPUT);
-    pinMode(DEN_MODE_GAPVK_GAPH, OUTPUT);
 
     // Chân cảm biến & CTHT
     pinMode(PIN_CTHT_TREN_DONGCO_KEP, INPUT);
@@ -409,30 +275,28 @@ void int_GPIO()
     pinMode(PIN_CTHT_1, INPUT);
 
     // Chân nút chọn sân và START
-    pinMode(START_AUTO, INPUT_PULLUP); // Nút START AUTO
-    pinMode(MODE_SAN, INPUT_PULLUP);   // Nút chọn sân
-    pinMode(MODE_GAPVK_GAPH, INPUT_PULLUP);
+    pinMode(START_BUTTON, INPUT_PULLUP); // Nút START AUTO
+    pinMode(SAN_BUTTON, INPUT_PULLUP);   // Nút chọn sân
+    pinMode(TASK_BUTTON, INPUT_PULLUP);
 
     // Chân cảm biến quang
     pinMode(CB_QUANG_PIN_1, INPUT); // Cảm biến quang kích HIGH
     pinMode(CB_QUANG_PIN_2, INPUT); // Cảm biến quang kích HIGH
-    pinMode(CB_QUANG_PIN_3, INPUT); // Cảm biến quang kích HIGH
-    pinMode(CB_QUANG_PIN_4, INPUT); // Cảm biến quang kích HIGH
 
     // Cảm biến siêu âm
-    pinMode(TRIG_CB1_TIEN, OUTPUT);
-    pinMode(ECHO_CB1_TIEN, INPUT);
+    pinMode(SONAR_UP_TRIG_PIN, OUTPUT);
+    pinMode(SONAR_UP_ECHO_PIN, INPUT);
 
-    pinMode(TRIG_CB2_TIEN_DUOI, OUTPUT);
-    pinMode(ECHO_CB2_TIEN_DUOI, INPUT);
+    pinMode(SONAR_DOWN_TRIG_PIN, OUTPUT);
+    pinMode(SONAR_DOWN_ECHO_PIN, INPUT);
 
-    pinMode(TRIG_CB3_SAU, OUTPUT);
-    pinMode(ECHO_CB3_SAU, INPUT);
+    pinMode(SONAR_LEFT_TRIG_PIN, OUTPUT);
+    pinMode(SONAR_LEFT_ECHO_PIN, INPUT);
 
     // Kích hoạt cảm biến siêu âm ở trạng thái LOW ban đầu
-    digitalWrite(TRIG_CB1_TIEN, LOW);
-    digitalWrite(TRIG_CB2_TIEN_DUOI, LOW);
-    digitalWrite(TRIG_CB3_SAU, LOW);
+    digitalWrite(SONAR_UP_TRIG_PIN, LOW);
+    digitalWrite(SONAR_DOWN_TRIG_PIN, LOW);
+    digitalWrite(SONAR_LEFT_TRIG_PIN, LOW);
 }
 void int_pcf8574()
 {
@@ -531,3 +395,160 @@ void initLaser()
         Serial.println(F("Failed to boot second VL53L0X"));
     }
 }
+void autoSanDo() // Hàm thực hiện quy trình tự động cho sân đỏ
+{
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, DOWN_UNLIMIT, 100, 0}); // Lệnh di chuyển xuống không giới hạn
+    while (1)
+    {
+        if (digitalRead(PIN_CTHT_1) == LOW) // Giả sử cảm biến CTHT 1 được kích hoạt khi robot đến vị trí cần dừng
+        {
+            sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0}); // Dừng động cơ
+            delay(5);
+        }
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, LEFT_UNLIMIT, 100, 0});
+    while (1)
+    {
+        int sensorValue = digitalRead(CB_QUANG_PIN_1); // Đọc giá trị
+        if (sensorValue == HIGH)
+        {
+            Serial.println("kích hoạt cảm biến quang - có vật");
+            sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0}); // Dừng động cơ
+            break;
+        }
+        delay(5);
+    }
+    pcf8574.write(XILANH_KEP, LOW); // Kích hoạt xylanh đẩy
+    delay(350);
+}
+// sendControlCMD(ControlCMD{OMNI_MOTOR, CROSS_UP_RIGHT, 100, 20000});
+// delay(50);
+// while (getControlCMD(OMNI_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+// {
+//     delay(50);
+// }
+// sendControlCMD(ControlCMD{OMNI_MOTOR, UP, 100, 2000});
+// delay(50);
+// while (getControlCMD(OMNI_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+// {
+//     delay(50);
+// }
+// lên bậc 1
+// horizonAlign();
+//{
+// Test DC Motor
+//-------------------------------------------------------------------------------------------------------
+// if (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == 0 && lastCTHTKeoDuoi == 1) // Nếu cảm biến CTHT dưới động cơ kéo được kích hoạt
+// {
+//     ControlCMD cmd;
+//     cmd.physicMotor = DC_NANG_HA;
+//     cmd.direct = MOTOR_BACKWARD;
+//     cmd.speed = 80;
+//     cmd.distance = 0;
+//     Serial.println("CTHT dưới động cơ kéo được kích hoạt - Kéo xuống");
+//     sendControlCMD(cmd);
+// }
+// if (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == 1 && lastCTHTKeoDuoi == 0) // Nếu cảm biến CTHT trên động cơ kéo được kích hoạt
+// {
+//     ControlCMD cmd;
+//     cmd.physicMotor = DC_NANG_HA;
+//     cmd.direct = MOTOR_STOP;
+//     cmd.speed = 0;
+//     cmd.distance = 0;
+//     Serial.println("CTHT dưới động cơ kéo được kích hoạt - Dừng kéo");
+//     sendControlCMD(cmd);
+// }
+// lastCTHTKeoDuoi = digitalRead(PIN_CTHT_DUOI_DONGCO_KEO);
+
+// if (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == 0 && lastCTHTKeoTren == 1) // Nếu cảm biến CTHT trên động cơ kéo được kích hoạt
+// {
+//     ControlCMD cmd;
+//     cmd.physicMotor = DC_NANG_HA;
+//     cmd.direct = MOTOR_FORWARD;
+//     cmd.speed = 80;
+//     cmd.distance = 0;
+//     Serial.println("CTHT trên động cơ kéo được kích hoạt - Kéo lên");
+//     sendControlCMD(cmd);
+// }
+// if (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == 1 && lastCTHTKeoTren == 0) // Nếu cảm biến CTHT trên động cơ kéo được kích hoạt
+// {
+//     ControlCMD cmd;
+//     cmd.physicMotor = DC_NANG_HA;
+//     cmd.direct = MOTOR_STOP;
+//     cmd.speed = 0;
+//     cmd.distance = 0;
+//     Serial.println("CTHT trên động cơ kéo được kích hoạt - Dừng kéo");
+//     sendControlCMD(cmd);
+// }
+// lastCTHTKeoTren = digitalRead(PIN_CTHT_TREN_DONGCO_KEO);
+
+//-----------------------------------------------------------------------------------------------------------
+
+// Test động cơ Omni
+// ControlCMD cmd;
+// cmd.physicMotor = OMNI_MOTOR;
+// cmd.direct = UP;
+// cmd.speed = 100;
+// cmd.distance = 5000;
+// Serial.println("Gửi lệnh điều khiển...");
+// sendControlCMD(cmd);
+// delay(100);
+// Serial.println("Yêu cầu trạng thái hiện tại của động cơ...");
+// ControlCMD receivedCmd = getControlCMD(OMNI_MOTOR);
+// Serial.printf("Lệnh nhận được: Motor: 0x%02X, Direct: 0x%02X, Speed: %d, Distance: %d\n",
+//               receivedCmd.physicMotor, receivedCmd.direct, receivedCmd.speed, receivedCmd.distance);
+// while (receivedCmd.distance > 0)
+// {
+//     delay(100);
+//     receivedCmd = getControlCMD(OMNI_MOTOR);
+//     Serial.printf("Lệnh nhận được: Motor: 0x%02X, Direct: 0x%02X, Speed: %d, Distance: %d\n",
+//                   receivedCmd.physicMotor, receivedCmd.direct, receivedCmd.speed, receivedCmd.distance);
+// }
+// cmd.physicMotor = OMNI_MOTOR;
+// cmd.direct = DOWN;
+// cmd.speed = 100;
+// cmd.distance = 5000;
+// Serial.println("Gửi lệnh điều khiển...");
+// sendControlCMD(cmd);
+// delay(100);
+// while (receivedCmd.distance > 0)
+// {
+//     delay(100);
+//     receivedCmd = getControlCMD(OMNI_MOTOR);
+//     Serial.printf("Lệnh nhận được: Motor: 0x%02X, Direct: 0x%02X, Speed: %d, Distance: %d\n",
+//                   receivedCmd.physicMotor, receivedCmd.direct, receivedCmd.speed, receivedCmd.distance);
+// }
+// delay(3000);
+// MotorStatus status1 = {0, 0, 0};
+// while (status1.status != STOP_MOTOR)
+// {
+//     status1 = getMotorStatus();
+//     Serial.printf("Motor Status: %d, Speed: %d, Pulse: %d\n", status1.status, status1.speed, status1.pulse);
+
+//     delay(100); // Đợi một chút trước khi kiểm tra lại
+// }
+// Serial.println("Đã hoàn thành lệnh nâng");
+// while (
+//--------------------------------
+// readUartFromPC(); // Nhận dữ liệu Tag từ Camera (Serial2)
+// kiemtratrangthainut();
+
+// if (auto_done)
+// {
+//     auto_done = false;
+//     robotReady = false;
+//     Serial.println("XONG! Nhan START de chay lai.");
+// }
+//--------------------------------
+// if (millis() - ControlTime > 505)
+// {
+//     Motor = getMotorStatus();
+//     if (Motor.status != STOP)
+//     {
+//         sendMotorCommand(STOP, 0, 0);
+//     }
+//     ControlTime = millis();
+// }
+
+// delay(1);
+//}
