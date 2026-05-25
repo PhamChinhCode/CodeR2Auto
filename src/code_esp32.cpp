@@ -3,6 +3,7 @@
 #include "Arduino.h"
 #include "PCF8574.h"
 #include "Adafruit_VL53L0X.h"
+#include <ESP32Servo.h>
 
 // ──────────────────────────────────────────────
 // I2C → Pico slave
@@ -15,7 +16,7 @@
 // PCF8574
 // ──────────────────────────────────────────────
 PCF8574 pcf8574(0x20, &Wire1);
-
+Servo servoKep;
 // ──────────────────────────────────────────────
 // MOTOR COMMANDS
 // ──────────────────────────────────────────────
@@ -109,13 +110,16 @@ PCF8574 pcf8574(0x20, &Wire1);
 #define SONAR_UP 0x72
 #define SONAR_DOWN 0x73
 #define SONAR_LEFT 0x74
+#define SONAR_RIGHT 0x75
 
-#define SONAR_UP_TRIG_PIN 13
-#define SONAR_UP_ECHO_PIN 12
-#define SONAR_DOWN_TRIG_PIN 10
-#define SONAR_DOWN_ECHO_PIN 46
-#define SONAR_LEFT_TRIG_PIN 17 // DUNG  CHÂN UART 1
-#define SONAR_LEFT_ECHO_PIN 18 // DUNG  CHÂN UART 1
+#define SONAR_UP_TRIG_PIN 12
+#define SONAR_UP_ECHO_PIN 13
+#define SONAR_DOWN_TRIG_PIN 46
+#define SONAR_DOWN_ECHO_PIN 10
+#define SONAR_LEFT_TRIG_PIN 18  // DUNG  CHÂN UART 1
+#define SONAR_LEFT_ECHO_PIN 17  // DUNG  CHÂN UART 1
+#define SONAR_RIGHT_TRIG_PIN 40 // DUNG  CHÂN UART 1
+#define SONAR_RIGHT_ECHO_PIN 5  // DUNG  CHÂN UART 1
 
 // ──────────────────────────────────────────────
 //  chân CẢM BIẾN laser
@@ -126,8 +130,11 @@ PCF8574 pcf8574(0x20, &Wire1);
 #define XSHUT_LEFT_PIN 41
 #define XSHUT_RIGHT_PIN 42
 
-#define WIRE_SDA 6
-#define WIRE_SCL 7
+#define WIRE_SDA 7
+#define WIRE_SCL 6
+
+// Servo
+#define SERVO_KEP_PIN 14
 
 // xilanh
 
@@ -164,9 +171,203 @@ void sendControlCMD(ControlCMD cmd, uint8_t cmdType = SET_BYTE);
 ControlCMD getControlCMD(uint8_t motor);
 
 // hàm hỗ trợ di chuyển
-void horizonAlign();
-void verticalAlign();
+void fontAlign(int distance, uint16_t speed) // căn chỉnh khoảng cách với tường phía trước bằng cảm biến laser
+{
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, speed, 2000});
+    while (getDisLaser(LASER_LEFT) > distance || getDisLaser(LASER_RIGHT) > distance)
+    {
+        delay(5);
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+}
+void leftAlign(int distance, uint16_t speed) // căn chỉnh khoảng cách với tường bên trái bằng cảm biến siêu âm
+{
+    while (getSonar(SONAR_LEFT) != distance)
+    {
+        delay(5);
+        if (getSonar(SONAR_LEFT) > distance)
+        {
+            sendControlCMD(ControlCMD{MECANUM_MOTOR, LEFT_UNLIMIT, speed, 0});
+        }
+        else
+        {
+            sendControlCMD(ControlCMD{MECANUM_MOTOR, RIGHT_UNLIMIT, speed, 0});
+        }
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+}
+void verticalAlign() // căn chỉnh song song với tường bằng cảm biến laser
+{
+    while (getDisLaser(LASER_LEFT) / 10 != getDisLaser(LASER_RIGHT) / 10)
+    {
+        delay(5);
+        if (getDisLaser(LASER_LEFT) > getDisLaser(LASER_RIGHT))
+        {
+            sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_LEFT_UNLIMIT, 20, 0});
+        }
+        else
+        {
+            sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_RIGHT_UNLIMIT, 20, 0});
+        }
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+}
+void moveABS(uint8_t dir, uint16_t speed, uint16_t distance)
+{
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, dir, speed, distance});
+    delay(50);
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(20);
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+    delay(20);
+}
+void jumpUp(bool pick)
+{
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+    while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+    delay(20);
+    sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 70, 0});
+    while (getSonar(SONAR_DOWN) > 15)
+    {
+        delay(10);
+    }
+    sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+    delay(20);
+    servoKep.write(pick ? 170 : 0);
+    delay(200);
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+    while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+    delay(20);
+}
+void jumpDown()
+{
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, DOWN_UNLIMIT, 50, 2000});
+    while (getSonar(SONAR_DOWN) < 15)
+    {
+        delay(5);
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+    delay(20);
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+    while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+    delay(20);
+    sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_LUI, 50, 0});
+    while (getSonar(SONAR_UP) < 15)
+    {
+        delay(5);
+    }
+    delay(40);
+    sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+    delay(20);
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+    while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+}
 
+void autogapvkSanDo();
+void runForest()
+{
+    moveABS(UP, 20, 2000);
+    //---> cbi lên bậc 1
+    fontAlign(150, 60);
+    verticalAlign();
+    fontAlign(70, 20);
+    jumpUp(false);
+    /// --> đã lên được bậc 1
+    fontAlign(150, 60);
+    verticalAlign();
+    leftAlign(42, 20);
+    fontAlign(70, 20);
+    jumpUp(true);
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_KEO, 70, 0});
+    delay(1500);
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+    // ------>> đã lên được bậc 2
+
+    fontAlign(150, 60);
+    verticalAlign();
+    fontAlign(70, 20);
+    jumpUp(true);
+    // ------>> đã lên được bậc 3
+    moveABS(UP, 50, 2000);
+    moveABS(RO_LEFT, 50, 1100);
+    jumpDown();
+    // ------>> đã xuống được bậc 2
+    moveABS(DOWN, 50, 2000);
+    verticalAlign();
+    moveABS(RO_LEFT, 50, 1100);
+    jumpDown();
+    // ------>> đã xuống được bậc 1
+    moveABS(DOWN, 50, 2000);
+    verticalAlign();
+    jumpDown();
+    // ------>> đã xuống được bậc 0
+    moveABS(DOWN, 50, 2000);
+    verticalAlign();
+}
+void gotoSideC()
+{
+    // lên khu C
+    moveABS(LEFT, 70, 8000);
+    delay(50);
+    moveABS(RO_LEFT, 50, 2200);
+    delay(50);
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_KEO, 70, 0});
+    while (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+    delay(50);
+    sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 90, 0});
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_LEFT_UNLIMIT, 100, 0});
+    delay(1500);
+    fontAlign(300, 100);
+    sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 90, 0});
+    verticalAlign();
+    delay(20);
+    moveABS(DOWN, 50, 1000);
+    delay(20);
+}
+void putKFS()
+{
+    moveABS(RO_LEFT, 50, 1100);
+    delay(20);
+    moveABS(UP, 100, 25000);
+    delay(20);
+    fontAlign(700, 30);
+    delay(20);
+    verticalAlign(); // căn vuông góc bờ đối diện
+    delay(20);
+    leftAlign(50, 30); // vij triss caafn chirnh
+    delay(20);
+    verticalAlign();
+    delay(20);
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_KEO, 90, 0});
+    while (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+    delay(20);
+
+    fontAlign(250, 20);
+    delay(20);
+    servoKep.write(0);
+    delay(200);
+    moveABS(DOWN, 50, 3000);
+    delay(20);
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_THA, 90, 0});
+    while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == HIGH)
+        ;
+    sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+    delay(20);
+}
 void autoSanDo();
 
 // flat for run code
@@ -193,26 +394,465 @@ void setup()
 
     Wire1.setClock(100000);
     Wire1.setTimeout(50); // ← tăng từ 5 lên 50ms
+    ESP32PWM::allocateTimer(0);
+    ESP32PWM::allocateTimer(1);
+    ESP32PWM::allocateTimer(2);
+    ESP32PWM::allocateTimer(3);
+    servoKep.setPeriodHertz(50); // Standard 50hz servo
+    servoKep.attach(SERVO_KEP_PIN, 500, 19000);
+    servoKep.write(0);
     int_pcf8574();
     int_GPIO();
+    initLaser();
 }
 // ──────────────────────────────────────────────
 // LOOP
 // ──────────────────────────────────────────────
 bool lastCTHTKeoDuoi = 1;
 bool lastCTHTKeoTren = 1;
+void testcb()
+{
+    while (true)
+    {
+        // Serial.println("Test DC KEO");
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_KEO, 70, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_THA, 70, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // Serial.println("Test DC NANG");
 
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // Serial.println("Test DC TIENLUI");
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 70, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_LUI, 70, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // Serial.println("Test DC XOAY");
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_LEN, 70, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_KEP) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_XUONG, 70, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEP) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // Serial.println("Test DC KEO");
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_KEO, 70, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_THA, 70, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // Serial.println("Test Xilanh KEP");
+        // pcf8574.write(XILANH_KEP, LOW);
+        // delay(2000);
+        // pcf8574.write(XILANH_KEP, HIGH);
+        // delay(2000);
+        // pcf8574.write(XILANH_DAY, LOW);
+        // delay(2000);
+        // pcf8574.write(XILANH_DAY, HIGH);
+        // delay(2000);
+        // Serial.println("Test Servo KEP");
+        servoKep.write(170);
+        delay(2000);
+        // servoKep.write(0);
+        // delay(2000);
+        while (true)
+        {
+            delay(500);
+            Serial.printf("Sensor: LL=%d LR=%d SL=%d SR=%d SU=%d SD=%d\n", getDisLaser(LASER_LEFT), getDisLaser(LASER_RIGHT), getSonar(SONAR_LEFT), getSonar(SONAR_RIGHT), getSonar(SONAR_UP), getSonar(SONAR_DOWN));
+        }
+    }
+    //
+    // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+    // while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+    //     ;
+    // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+    // servoKep.write(0);
+    //
+    // moveABS(UP, 200, 50000);
+    // moveABS(RO_LEFT, 200, 11000);
+    delay(3000);
+    runForest();
+    delay(10000);
+    while (true)
+    {
+
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP, 20, 2000});
+        delay(50);
+        while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+        {
+            delay(50);
+        }
+        delay(2000);
+        //---> cbi lên bậc 1
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, 20, 2000});
+        while (getDisLaser(LASER_LEFT) > 150 || getDisLaser(LASER_RIGHT) > 150)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        while (getDisLaser(LASER_LEFT) / 10 != getDisLaser(LASER_RIGHT) / 10)
+        {
+            delay(5);
+            if (getDisLaser(LASER_LEFT) > getDisLaser(LASER_RIGHT))
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_LEFT_UNLIMIT, 20, 0});
+            }
+            else
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_RIGHT_UNLIMIT, 20, 0});
+            }
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, 20, 2000});
+        while (getDisLaser(LASER_LEFT) > 50 || getDisLaser(LASER_RIGHT) > 50)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+        while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 50, 0});
+        while (getSonar(SONAR_DOWN) > 15)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+        while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        /// --> đã lên được bậc 1
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, 20, 2000});
+        while (getDisLaser(LASER_LEFT) > 150 || getDisLaser(LASER_RIGHT) > 150)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        while (getDisLaser(LASER_LEFT) / 10 != getDisLaser(LASER_RIGHT) / 10)
+        {
+            delay(5);
+            if (getDisLaser(LASER_LEFT) > getDisLaser(LASER_RIGHT))
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_LEFT_UNLIMIT, 20, 0});
+            }
+            else
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_RIGHT_UNLIMIT, 20, 0});
+            }
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        while (getSonar(SONAR_LEFT) != 42)
+        {
+            delay(5);
+            if (getSonar(SONAR_LEFT) > 42)
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, LEFT_UNLIMIT, 20, 0});
+            }
+            else
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RIGHT_UNLIMIT, 20, 0});
+            }
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, 20, 2000});
+        while (getDisLaser(LASER_LEFT) > 50 || getDisLaser(LASER_RIGHT) > 50)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+        while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 50, 0});
+        while (getSonar(SONAR_DOWN) > 15)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        delay(2000);
+        servoKep.write(170);
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+        while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        // ------>> đã lên được bậc 2
+
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, 20, 2000});
+        while (getDisLaser(LASER_LEFT) > 150 || getDisLaser(LASER_RIGHT) > 150)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        while (getDisLaser(LASER_LEFT) / 10 != getDisLaser(LASER_RIGHT) / 10)
+        {
+            delay(5);
+            if (getDisLaser(LASER_LEFT) > getDisLaser(LASER_RIGHT))
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_LEFT_UNLIMIT, 20, 0});
+            }
+            else
+            {
+                sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_RIGHT_UNLIMIT, 20, 0});
+            }
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP_UNLIMIT, 20, 2000});
+        while (getDisLaser(LASER_LEFT) > 50 || getDisLaser(LASER_RIGHT) > 50)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+        while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 50, 0});
+        while (getSonar(SONAR_DOWN) > 15)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+        while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        // ------>> đã lên được bậc 3
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, UP, 20, 2000});
+        delay(10);
+        while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+        {
+            delay(10);
+        }
+        delay(2000);
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_LEFT, 20, 1100});
+        delay(10);
+        while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+        {
+            delay(10);
+        }
+        delay(2000);
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, DOWN_UNLIMIT, 20, 2000});
+        while (getSonar(SONAR_DOWN) < 15)
+        {
+            delay(10);
+        }
+        sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+        while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_LUI, 50, 0});
+        while (getSonar(SONAR_UP) < 15)
+        {
+            delay(5);
+        }
+        sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        delay(2000);
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+        while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+            ;
+        sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        //----->> đã xuống được bậc 2
+
+        delay(10000);
+        // sendControlCMD(ControlCMD{MECANUM_MOTOR, DOWN, 20, 2000});
+        // delay(50);
+        // while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+        // {
+        //     delay(50);
+        // }
+        // delay(5000);
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_HA, 90, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_NANG) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_TIEN, 99, 0});
+        // while (getSonar(SONAR_DOWN) > 15)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_NANG, 90, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_NANG) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_NANG_HA, MOTOR_STOP, 0, 0});
+        // delay(2000);
+
+        // // keo tha
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_KEO, 50, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_KEO) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_THA, 50, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEO) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_KEO, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_LEN, 50, 0});
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_KEP) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_XUONG, 50, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEP) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0});
+        // delay(2000);
+
+        // while (digitalRead(PIN_CTHT_TREN_DONGCO_KEP) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        // delay(2000);
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_LUI, 50, 0});
+        // while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEP) == HIGH)
+        //     ;
+        // sendControlCMD(ControlCMD{DC_TIENLUI, MOTOR_STOP, 0, 0});
+        // delay(2000);
+    }
+}
 void loop()
 {
-    readUartFromPC(); // Nhận dữ liệu Tag từ Camera (Serial2)
-    // kiemtratrangthainut();
 
-    if (auto_done)
+    autogapvkSanDo();
+
+    moveABS(RIGHT, 100, 4000);
+    moveABS(DOWN, 100, 6000);
+    moveABS(RO_RIGHT, 100, 1100);
+
+    runForest();
+    gotoSideC();
+    putKFS();
+}
+
+int getSonar(uint8_t cb_id)
+{
+    if (cb_id == SONAR_UP)
     {
-        auto_done = false;
-        robotReady = false;
-        Serial.println("XONG! Nhan START de chay lai.");
+        digitalWrite(SONAR_UP_TRIG_PIN, HIGH);
+        delayMicroseconds(10);
+        digitalWrite(SONAR_UP_TRIG_PIN, LOW);
+
+        // Đo thời gian phản hồi
+        long duration = pulseIn(SONAR_UP_ECHO_PIN, HIGH, 300000); // Timeout 30ms
+        if (duration == 0)
+            return -1; // Không nhận được phản hồi
+
+        // Tính khoảng cách (cm)
+        int distance = duration * 0.034 / 2;
+        return distance;
     }
+    else if (cb_id == SONAR_DOWN)
+    {
+        digitalWrite(SONAR_DOWN_TRIG_PIN, HIGH);
+        delayMicroseconds(10);
+        digitalWrite(SONAR_DOWN_TRIG_PIN, LOW);
+
+        long duration = pulseIn(SONAR_DOWN_ECHO_PIN, HIGH, 300000);
+        if (duration == 0)
+            return -1;
+
+        int distance = duration * 0.034 / 2;
+        return distance;
+    }
+    else if (cb_id == SONAR_LEFT)
+    {
+        digitalWrite(SONAR_LEFT_TRIG_PIN, HIGH);
+        delayMicroseconds(10);
+        digitalWrite(SONAR_LEFT_TRIG_PIN, LOW);
+
+        long duration = pulseIn(SONAR_LEFT_ECHO_PIN, HIGH, 300000);
+        if (duration == 0)
+            return -1;
+
+        int distance = duration * 0.034 / 2;
+        return distance;
+    }
+    else if (cb_id == SONAR_RIGHT)
+    {
+        digitalWrite(SONAR_RIGHT_TRIG_PIN, HIGH);
+        delayMicroseconds(10);
+        digitalWrite(SONAR_RIGHT_TRIG_PIN, LOW);
+
+        long duration = pulseIn(SONAR_RIGHT_ECHO_PIN, HIGH, 300000);
+        if (duration == 0)
+            return -1;
+
+        int distance = duration * 0.034 / 2;
+        return distance;
+    }
+
+    return -1; // ID không hợp lệ
+}
+int getDisLaser(uint8_t cb_id)
+{
+    int dist;
+    if (cb_id == LASER_LEFT)
+    {
+        dist = lox1.rangingTest(&measure1, false) == VL53L0X_ERROR_NONE ? measure1.RangeMilliMeter : -1;
+        if (dist > 60)
+            dist = dist - 60;
+        return dist;
+    }
+    else if (cb_id == LASER_RIGHT)
+    {
+        dist = lox2.rangingTest(&measure2, false) == VL53L0X_ERROR_NONE ? measure2.RangeMilliMeter : -1;
+        if (dist > 25)
+            dist = dist - 25;
+        return dist;
+    }
+    return -1; // ID không hợp lệ
 }
 void sendControlCMD(ControlCMD cmd, uint8_t cmdType)
 {
@@ -377,9 +1017,9 @@ void initLaser()
     // activating LOX1 and resetting LOX2
     digitalWrite(XSHUT_LEFT_PIN, HIGH);
     digitalWrite(XSHUT_RIGHT_PIN, LOW);
-
+    Wire.begin(WIRE_SDA, WIRE_SCL);
     // initing LOX1
-    if (!lox1.begin(LASER_LEFT))
+    if (!lox1.begin(LASER_LEFT, false, &Wire))
     {
         Serial.println(F("Failed to boot first VL53L0X"));
     }
@@ -390,7 +1030,7 @@ void initLaser()
     delay(10);
 
     // initing LOX2
-    if (!lox2.begin(LASER_RIGHT))
+    if (!lox2.begin(LASER_RIGHT, false, &Wire))
     {
         Serial.println(F("Failed to boot second VL53L0X"));
     }
@@ -421,7 +1061,126 @@ void autoSanDo() // Hàm thực hiện quy trình tự động cho sân đỏ
     pcf8574.write(XILANH_KEP, LOW); // Kích hoạt xylanh đẩy
     delay(350);
 }
-// sendControlCMD(ControlCMD{OMNI_MOTOR, CROSS_UP_RIGHT, 100, 20000});
+void autogapvkSanDo() // Hàm thực hiện quy trình tự động cho sân đỏ
+{
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_XUONG, 100, 0}); // Lệnh di chuyển xuống không giới hạn
+    while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEP) == HIGH)
+        ;                                                           // Đợi đến khi cảm biến CTHT dưới động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0});          // Dừng động cơ
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, DOWN_UNLIMIT, 50, 0}); // Lệnh di chuyển xuống không giới hạn
+    Serial.println("Di chuyển xuống...");
+    while (digitalRead(PIN_CTHT_1) == HIGH)
+        ;                                                  // Đợi đến khi cảm biến CTHT trên động cơ nâng được kích hoạt
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0}); // Dừng động cơ
+    Serial.println("Đã đến vị trí cần dừng.");
+
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, LEFT_UNLIMIT, 100, 0});
+    while (digitalRead(CB_QUANG_PIN_1) == 0)
+        ;                                                  // Đợi đến khi cảm biến CTHT trên động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0}); // Dừng động cơ
+    Serial.println("Cam bien quang 1 kich hoat - Dung di chuyen sang trai.");
+    pcf8574.write(XILANH_KEP, LOW); // Kẹp xylanh
+    delay(250);
+    pcf8574.write(XILANH_DAY, HIGH); // Thả xylanh
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_LEN, 100, 0});
+    pcf8574.write(XILANH_DAY, HIGH); // Thả xylanh
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, UP, 100, 4000});
+    Serial.println("Di chuyển lên...");
+    delay(50);
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(10);
+        if (digitalRead(PIN_CTHT_TREN_DONGCO_KEP) == LOW) // Nếu cảm biến CTHT trên động cơ kẹp được kích hoạt sớm hơn dự kiến
+        {
+            sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0}); // Dừng động cơ
+            break;
+        }
+    }
+    while (digitalRead(PIN_CTHT_TREN_DONGCO_KEP) == HIGH)
+        ;                                                  // Đợi đến khi cảm biến CTHT trên động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0}); // Dừng động cơ
+    delay(50);
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_RIGHT, 100, 2200});
+    Serial.println("Quay phải...");
+    delay(50);
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(50);
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, RIGHT, 100, 2000});
+    Serial.println("Di chuyển sang trái...");
+    delay(50);
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(50);
+    }
+
+    tagReceived = false; // Reset trạng thái nhận tag để có thể nhận tag mới
+    while (!tagReceived)
+    {
+        readUartFromPC(); // đọc liên tục cho đến khi có tag
+        delay(10);
+    }
+    pcf8574.write(XILANH_KEP, HIGH); // Thả xylanh
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_XUONG, 100, 0});
+    while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEP) == HIGH)
+        ;                                                  // Đợi đến khi cảm biến CTHT dưới động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0}); // Dừng động cơ
+}
+void autogapvkSanXanh() // Hàm thực hiện quy trình tự động cho sân xanh
+{
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, DOWN_UNLIMIT, 100, 0}); // Lệnh di chuyển xuống không giới hạn
+    Serial.println("Di chuyển xuống...");
+    while (digitalRead(PIN_CTHT_1) == HIGH)
+        ;                                                  // Đợi đến khi cảm biến CTHT trên động cơ nâng được kích hoạt
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0}); // Dừng động cơ
+    Serial.println("Đã đến vị trí cần dừng.");
+
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, RIGHT_UNLIMIT, 100, 0});
+    while (digitalRead(CB_QUANG_PIN_1) == 0)
+        ;                                                  // Đợi đến khi cảm biến CTHT trên động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, STOP, 0, 0}); // Dừng động cơ
+    Serial.println("Cam bien quang 1 kich hoat - Dung di chuyen sang trai.");
+    pcf8574.write(XILANH_KEP, LOW); // Kẹp xylanh
+    delay(250);
+    pcf8574.write(XILANH_DAY, HIGH); // Thả xylanh
+    delay(250);
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_LEN, 100, 0});
+    pcf8574.write(XILANH_DAY, HIGH); // Thả xylanh
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, UP, 100, 1500});
+    Serial.println("Di chuyển lên...");
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(50);
+    }
+    while (digitalRead(PIN_CTHT_TREN_DONGCO_KEP) == HIGH)
+        ;                                                  // Đợi đến khi cảm biến CTHT trên động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0}); // Dừng động cơ
+
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, RO_RIGHT, 100, 180});
+    Serial.println("Quay phải...");
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(50);
+    }
+    sendControlCMD(ControlCMD{MECANUM_MOTOR, LEFT, 100, 1000});
+    Serial.println("Di chuyển sang trái...");
+    while (getControlCMD(MECANUM_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
+    {
+        delay(50);
+    }
+    tagReceived = false; // Reset trạng thái nhận tag để có thể nhận tag mới
+    while (!tagReceived)
+    {
+        readUartFromPC(); // đọc liên tục cho đến khi có tag
+        delay(10);
+    }
+    pcf8574.write(XILANH_KEP, HIGH); // Thả xylanh
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_XUONG, 100, 0});
+    while (digitalRead(PIN_CTHT_DUOI_DONGCO_KEP) == HIGH)
+        ;                                                  // Đợi đến khi cảm biến CTHT dưới động cơ kẹp được kích hoạt
+    sendControlCMD(ControlCMD{DC_XOAY, MOTOR_STOP, 0, 0}); // Dừng động cơ
+} // sendControlCMD(ControlCMD{OMNI_MOTOR, CROSS_UP_RIGHT, 100, 20000});
 // delay(50);
 // while (getControlCMD(OMNI_MOTOR).distance > 0) // Đợi đến khi hoàn thành lệnh di chuyển
 // {
